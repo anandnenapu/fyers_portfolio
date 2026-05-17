@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Fyers Auth Relay</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #07100b;
+      color: #00e676;
+      font-family: ui-monospace, Consolas, monospace;
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+    }
+    .box {
+      text-align: left;
+      padding: 32px;
+      border: 1px solid #1a3a28;
+      border-radius: 10px;
+      background: #0b1a12;
+      width: min(560px, calc(100vw - 32px));
+      box-sizing: border-box;
+    }
+    h2 { margin: 0 0 16px; font-size: 20px; }
+    .row { margin: 8px 0; }
+    .key { color: #7fbf99; }
+    .val { color: #ffffff; word-break: break-all; }
+    .err { color: #ff6677; }
+    .ok  { color: #00e676; }
+    hr { border: none; border-top: 1px solid #1a3a28; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2 id="title">🔐 Fyers Auth Relay</h2>
+    <div id="out"></div>
+  </div>
+
+  <script>
+    var GAS_EXEC_URL = "https://script.google.com/macros/s/AKfycbzCTvTdKfmvv2DfsFqvI0Iu_TVJ40QN_Pg4lusEwBnRchwOcoSsrEAOGmvFdLZ0L367Ng/exec";
+
+    function show(label, value, cls) {
+      var d = document.createElement('div');
+      d.className = 'row';
+      d.innerHTML = '<span class="key">' + label + ': </span><span class="' + (cls||'val') + '">' + value + '</span>';
+      document.getElementById('out').appendChild(d);
+    }
+
+    function hr() {
+      document.getElementById('out').appendChild(document.createElement('hr'));
+    }
+
+    (function () {
+      show('Full URL', window.location.href);
+      show('Search string', window.location.search || '(empty)');
+      hr();
+
+      var params = new URLSearchParams(window.location.search);
+
+      // Dump ALL params so we can see exactly what Fyers sends
+      var allParams = [];
+      params.forEach(function(v, k) { allParams.push(k + '=' + v); });
+      show('All params', allParams.length ? allParams.join(' | ') : '(none)');
+      hr();
+
+      // --- FIX: Fyers v3 sends "auth_code", not "code".
+      // Also skip "s" and "state" — those are status/state fields, not the code.
+      var SKIP_KEYS = { s: true, state: true, error: true, error_message: true, errmsg: true };
+
+      var code  = params.get("auth_code")      // Fyers v3 primary key
+               || params.get("code")            // OAuth2 standard fallback
+               || "";
+
+      // Safety: if what we got looks like a plain status number (e.g. "200"), reject it
+      if (/^\d+$/.test(code)) {
+        show('WARN', '"' + code + '" looks like a status code, not an auth code — ignoring it.', 'err');
+        code = "";
+      }
+
+      // Last-resort: scan ALL params for a value that looks like a real auth code
+      // (Fyers auth codes are long alphanumeric strings, not short numbers)
+      if (!code) {
+        params.forEach(function(v, k) {
+          if (!code && !SKIP_KEYS[k] && v.length > 20 && !/^\d+$/.test(v)) {
+            code = v;
+            show('WARN', 'Picked auth code from param "' + k + '" (fallback scan)', 'err');
+          }
+        });
+      }
+
+      var error = params.get("error") || params.get("error_message") || params.get("errmsg") || "";
+
+      show('auth_code param', params.get("auth_code") || '(not found)');
+      show('code param',      params.get("code")      || '(not found)');
+      show('s param',         params.get("s")         || '(not found)');
+      show('Resolved code',   code || '(none — see all params above)');
+      hr();
+
+      if (error) {
+        document.getElementById('title').textContent = '⚠️ Fyers Error';
+        show('ERROR', error, 'err');
+        return;
+      }
+
+      if (!code) {
+        document.getElementById('title').textContent = '⚠️ No Auth Code Found';
+        show('STATUS', 'Fyers did not send a recognisable auth code. Check "All params" above.', 'err');
+        return;
+      }
+
+      show('Sending to GAS...', code.slice(0, 20) + '...', 'ok');
+
+      // Send the real auth code to GAS
+      fetch(GAS_EXEC_URL + "?fyers_cb=1&auth_code=" + encodeURIComponent(code), {
+        method: "GET",
+        mode: "no-cors"
+      })
+      .then(function () {
+        document.getElementById('title').textContent = '✅ Done';
+        show('STATUS', 'Auth code sent to GAS. Return to the login page and click Step 2.', 'ok');
+        setTimeout(function () { window.close(); }, 3000);
+      })
+      .catch(function (err) {
+        show('Relay error', err.message, 'err');
+      });
+    })();
+  </script>
+</body>
+</html>
